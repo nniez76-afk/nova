@@ -1,0 +1,114 @@
+"""SLA Breach Decision-Support System - Streamlit app built from the Midterm Laboratory Examination.
+
+Run locally:  streamlit run app.py
+"""
+from pathlib import Path
+
+import pandas as pd
+import streamlit as st
+
+st.set_page_config(page_title="SAD Predictive System - SLA Breach Monitor", page_icon="🎓", layout="wide")
+
+from modules import dashboard as dash                      # noqa: E402
+from modules import data_processing as dp                  # noqa: E402
+from modules import exploratory_analysis as eda            # noqa: E402
+from modules import midterm_notebook as mnb                # noqa: E402
+from modules import prediction as pred                     # noqa: E402
+from modules import system_design as sd                    # noqa: E402
+
+ROOT = Path(__file__).resolve().parent
+
+PAGES = ["Home", "Dataset", "Data Analysis", "Prediction", "Dashboard", "System Design", "Midterm Notebook"]
+ROLES = [dash.ROLE_ADMIN, dash.ROLE_STAFF, dash.ROLE_STUDENT]
+STAFF_ONLY = {"Dataset", "Data Analysis", "Prediction"}
+
+
+# ----------------------------------------------------------------------------- cached resources
+@st.cache_data
+def load_sample() -> pd.DataFrame:
+    return pd.read_csv(ROOT / "data" / "student_service_requests.csv")
+
+
+@st.cache_data(show_spinner=False)
+def cached_clean(df: pd.DataFrame):
+    return dp.clean_data(df)
+
+
+@st.cache_resource(show_spinner="Loading trained pipeline ...")
+def load_model():
+    # Loaded once per server process - never retrained on page refresh.
+    return pred.load_or_rebuild_model()
+
+
+# ----------------------------------------------------------------------------- state
+ss = st.session_state
+ss.setdefault("raw_df", None)
+ss.setdefault("source_name", "Bundled synthetic sample")
+raw_df = ss["raw_df"] if ss["raw_df"] is not None else load_sample()
+source_name = ss["source_name"] if ss["raw_df"] is not None else "Bundled synthetic sample"
+
+try:
+    df_clean, clean_report = cached_clean(raw_df)
+    model, meta, notice = load_model()
+except Exception as exc:  # noqa: BLE001
+    st.error(f"The application could not start: {exc}")
+    st.stop()
+
+# ----------------------------------------------------------------------------- sidebar
+st.sidebar.title("🎓 SLA Monitor")
+menu = st.sidebar.selectbox("Module", PAGES)
+role = st.sidebar.selectbox("Signed-in role (demo)", ROLES, index=0,
+                            help="Demo control that shows role-based access. It is not real authentication.")
+st.sidebar.caption(f"Dataset: **{source_name}** ({len(df_clean):,} cleaned rows)")
+st.sidebar.caption(f"Model: **{meta.get('model_version', '?')}**")
+if source_name == "Bundled synthetic sample":
+    st.sidebar.warning("Synthetic demo data - not real student records.")
+
+
+# ----------------------------------------------------------------------------- pages
+def render_home() -> None:
+    st.title("🎓 Student Service Request Monitoring")
+    st.subheader("Predicting SLA breaches to support staff decisions")
+    st.markdown(
+        "This app deploys the outputs of the **Midterm Laboratory Examination** (Section B): the cleaned dataset, "
+        "the Decision Tree pipeline that predicts whether a service request will breach its SLA, and the SAD artefacts "
+        "(use cases, requirements, workflow).")
+    labeled = dp.labeled_subset(df_clean)
+    pending = dp.pending_subset(df_clean)
+    a, b, c, d = st.columns(4)
+    a.metric("Requests", f"{len(df_clean):,}")
+    b.metric("Completed with outcome", f"{len(labeled):,}")
+    c.metric("Pending", f"{len(pending):,}")
+    d.metric("Model accuracy (test)", f"{meta.get('metrics', {}).get('accuracy', 0):.0%}")
+
+    st.markdown("### How to use it")
+    st.markdown(
+        "1. **Dataset** - upload a CSV (or use the sample) and review the validation, null and duplicate summary.\n"
+        "2. **Data Analysis** - explore breach rates and workload with interactive charts.\n"
+        "3. **Prediction** - score one request or a batch with the saved model.\n"
+        "4. **Dashboard** - work the risk/review queue and record human decisions.\n"
+        "5. **System Design** - requirements, actors, use case diagram and workflow.\n"
+        "6. **Midterm Notebook** - view the original notebook and re-run it on the active data.")
+    st.info("⚠️ **Decision support only.** Predictions never authorise rejecting a request or denying a student service; "
+            "a human reviewer makes every final decision.")
+    st.caption("Use synthetic or properly authorised data for public deployment. Pick a role in the sidebar to see "
+               "role-based access in action.")
+
+
+if menu in STAFF_ONLY and role == dash.ROLE_STUDENT:
+    st.warning(f"🔒 The **{menu}** module is available to Student Services Staff and Service Administrators only. "
+               "Requesters can track their own request on the Dashboard page.")
+elif menu == "Home":
+    render_home()
+elif menu == "Dataset":
+    dp.render_dataset_page(load_sample())
+elif menu == "Data Analysis":
+    eda.render(df_clean)
+elif menu == "Prediction":
+    pred.render(model, meta, notice, df_clean, role)
+elif menu == "Dashboard":
+    dash.render(df_clean, model, meta, role)
+elif menu == "System Design":
+    sd.render()
+elif menu == "Midterm Notebook":
+    mnb.render(raw_df, source_name)
