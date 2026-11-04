@@ -1,4 +1,0 @@
-# Only needed to regenerate assets/ diagrams and run tests locally (not for deployment)
--r requirements.txt
-graphviz>=0.20      # also install the Graphviz binaries (https://graphviz.org/download/)
-pytest>=8.0
